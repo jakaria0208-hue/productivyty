@@ -1079,16 +1079,24 @@ input[type=range]::-webkit-slider-thumb:active { transform: scale(1.2); }
 .pw-header { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:24px; }
 .pw-week-nav { display:flex; align-items:center; gap:8px; }
 .pw-week-label { font-size:13px; font-weight:600; color:var(--text); min-width:190px; text-align:center; }
-.pw-layout { display:grid; grid-template-columns:1fr 420px; gap:20px; align-items:start; }
-.pw-days-col { display:flex; flex-direction:column; gap:8px; }
-.pw-charts-col { display:flex; flex-direction:column; gap:16px; }
-.pw-charts-row2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.pw-days-col { display:flex; flex-direction:column; gap:8px; min-width:0; }
+
+/* Week summary stats */
+.pw-week-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px; }
+.pw-stat { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+.pw-stat-val { font-size:22px; font-weight:700; color:var(--text); line-height:1; }
+.pw-stat-label { font-size:11px; color:var(--muted); margin-top:4px; letter-spacing:.04em; }
+.pw-stat-accent .pw-stat-val { color:var(--accent); }
+
+/* Mini donut per day */
+.pw-mini-donut-wrap { position:relative; width:52px; height:52px; flex-shrink:0; }
+.pw-mini-pct { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; color:var(--text); pointer-events:none; }
 
 .pw-day { background:var(--card); border:1px solid var(--border); border-radius:10px; overflow:hidden; transition:border-color .15s; }
 .pw-day.expanded { border-color:var(--border2); }
-.pw-day-header { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; cursor:pointer; user-select:none; transition:background .15s; }
+.pw-day-header { display:flex; align-items:center; gap:12px; padding:12px 16px; user-select:none; transition:background .15s; }
 .pw-day-header:hover { background:rgba(255,255,255,.03); }
-.pw-day-name { font-size:12px; font-weight:700; letter-spacing:.08em; color:var(--text); min-width:120px; }
+.pw-day-name { font-size:12px; font-weight:700; letter-spacing:.08em; color:var(--text); }
 .pw-day-right { display:flex; align-items:center; gap:10px; }
 .pw-progress-bar { width:80px; height:3px; background:rgba(255,255,255,.08); border-radius:2px; overflow:hidden; }
 .pw-progress-fill { height:100%; background:var(--accent); border-radius:2px; transition:width .4s ease; }
@@ -1187,13 +1195,8 @@ input[type=range]::-webkit-slider-thumb:active { transform: scale(1.2); }
   letter-spacing: .05em;
 }
 @media (max-width: 768px) {
-  .pw-layout { grid-template-columns:1fr; }
-  .pw-charts-row2 { grid-template-columns:1fr 1fr; }
   .pw-week-label { min-width:120px; font-size:11px; }
   .pw-day-name { min-width:80px; }
-}
-@media (max-width:480px) {
-  .pw-charts-row2 { grid-template-columns:1fr; }
 }
 </style>
 </head>
@@ -1495,21 +1498,22 @@ input[type=range]::-webkit-slider-thumb:active { transform: scale(1.2); }
         </button>
       </div>
     </div>
-    <div class="pw-layout">
+    <div class="pw-week-summary" id="pwSummary"></div>
+    <div class="workout-layout">
       <div class="pw-days-col" id="plannerDaysList"></div>
-      <div class="pw-charts-col">
+      <div class="charts-stack">
         <div class="chart-card">
-          <div class="chart-title">DAILY COMPLETION</div>
-          <div class="chart-wrap" style="height:200px"><canvas id="chartPlannerDaily"></canvas></div>
+          <div class="chart-title">Daily Completion</div>
+          <div class="chart-wrap" style="height:160px"><canvas id="chartPlannerDaily"></canvas></div>
         </div>
-        <div class="pw-charts-row2">
+        <div class="grid-2" style="gap:16px">
           <div class="chart-card">
-            <div class="chart-title">OVERALL PROGRESS</div>
-            <div class="chart-wrap" style="height:180px"><canvas id="chartPlannerDonut"></canvas></div>
+            <div class="chart-title">Overall Progress</div>
+            <div class="chart-wrap" style="height:200px"><canvas id="chartPlannerDonut"></canvas></div>
           </div>
           <div class="chart-card">
-            <div class="chart-title">PER KATEGORI</div>
-            <div class="chart-wrap" style="height:180px"><canvas id="chartPlannerCategory"></canvas></div>
+            <div class="chart-title">Per Kategori</div>
+            <div class="chart-wrap" style="height:200px"><canvas id="chartPlannerCategory"></canvas></div>
           </div>
         </div>
       </div>
@@ -2979,6 +2983,7 @@ let plannerActiveDate = todayDateStr();
 let plannerDailyChart = null;
 let plannerDonutChart = null;
 let plannerCatChart = null;
+let plannerMiniCharts = {};
 
 const PLANNER_CATS = ['Work','Exercise','Meal','Sleep','Study','Personal'];
 const PLANNER_DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -3113,26 +3118,43 @@ function updatePlannerCharts() {
     }
   }
 
-  // Chart 2: Doughnut — overall progress
+  // Chart 2: Doughnut — overall progress with center text
   const ctx2 = document.getElementById('chartPlannerDonut');
   if (ctx2) {
     const remaining = 100 - overallPct;
     if (plannerDonutChart) {
       plannerDonutChart.data.datasets[0].data = [overallPct, remaining];
+      plannerDonutChart.options.plugins.centerText.text = overallPct + '%';
       plannerDonutChart.update();
     } else {
+      const centerTextPlugin = {
+        id: 'centerText',
+        afterDraw(chart) {
+          const { ctx: c, chartArea: { width, height, left, top } } = chart;
+          const txt = chart.options.plugins.centerText?.text || '';
+          c.save();
+          c.font = 'bold 18px Inter, sans-serif';
+          c.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#fff';
+          c.textAlign = 'center';
+          c.textBaseline = 'middle';
+          c.fillText(txt, left + width / 2, top + height / 2);
+          c.restore();
+        }
+      };
       plannerDonutChart = new Chart(ctx2, {
         type: 'doughnut',
+        plugins: [centerTextPlugin],
         data: {
           labels: ['Done', 'Remaining'],
-          datasets: [{ data: [overallPct, remaining], backgroundColor: [cc.accent, 'rgba(255,255,255,.08)'], borderWidth: 0, cutout: '72%' }]
+          datasets: [{ data: [overallPct, remaining], backgroundColor: [cc.accent, 'rgba(255,255,255,.08)'], borderWidth: 0, cutout: '74%' }]
         },
         options: {
           responsive: true, maintainAspectRatio: false,
           animation: { duration: 700, easing: 'easeInOutQuart' },
           plugins: {
             legend: { display: false },
-            tooltip: { callbacks: { label: ctx => ctx.label + ': ' + ctx.raw + '%' } }
+            tooltip: { callbacks: { label: ctx => ctx.label + ': ' + ctx.raw + '%' } },
+            centerText: { text: overallPct + '%' }
           }
         }
       });
@@ -3203,12 +3225,30 @@ function renderPlannerWeek() {
   const dates = getWeekDates(plannerCurrentWeekStart);
   const today = todayDateStr();
 
-  // Update week label
+  // Week label
   const s = new Date(dates[0] + 'T00:00:00');
   const e = new Date(dates[6] + 'T00:00:00');
-  const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const fmtD = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   document.getElementById('plannerWeekLabel').textContent =
-    fmt(s) + ' – ' + e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    fmtD(s) + ' – ' + e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  // Week summary stats
+  let totalAll = 0, doneAll = 0;
+  dates.forEach(dateStr => {
+    const blocks = getPlannerDay(dateStr).blocks || [];
+    totalAll += blocks.length;
+    doneAll += blocks.filter(b => b.done).length;
+  });
+  const weekPct = totalAll ? Math.round(doneAll / totalAll * 100) : 0;
+  const sumEl = document.getElementById('pwSummary');
+  if (sumEl) sumEl.innerHTML = `
+    <div class="pw-stat"><div class="pw-stat-val">${totalAll}</div><div class="pw-stat-label">Total Tasks</div></div>
+    <div class="pw-stat pw-stat-accent"><div class="pw-stat-val">${doneAll}</div><div class="pw-stat-label">Completed</div></div>
+    <div class="pw-stat"><div class="pw-stat-val">${weekPct}%</div><div class="pw-stat-label">This Week</div></div>`;
+
+  // Destroy existing mini donuts before rebuild
+  Object.values(plannerMiniCharts).forEach(c => { try { c.destroy(); } catch {} });
+  plannerMiniCharts = {};
 
   const container = document.getElementById('plannerDaysList');
   container.innerHTML = '';
@@ -3228,16 +3268,24 @@ function renderPlannerWeek() {
 
     const blocksHtml = blocks.length
       ? blocks.map(b => renderPwBlock(b, dateStr)).join('')
-      : `<div class="pw-empty">No blocks yet — <button class="btn-link" onclick="loadPlannerTemplate('${dateStr}')">load template</button></div>`;
+      : `<div class="pw-empty">No blocks — <button class="btn-link" onclick="loadPlannerTemplate('${dateStr}')">load template</button></div>`;
 
     dayEl.innerHTML = `
       <div class="pw-day-header">
-        <div style="display:flex;align-items:center;gap:8px;flex:1">
-          <span class="pw-day-name">${PLANNER_DAY_NAMES[i]} <span style="font-weight:400;color:var(--muted);font-size:11px">${dateLabel}</span>${isToday ? '<span class="pw-today-badge">Today</span>' : ''}</span>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span class="pw-day-name">${PLANNER_DAY_NAMES[i]}</span>
+            <span style="font-size:11px;color:var(--muted)">${dateLabel}</span>
+            ${isToday ? '<span class="pw-today-badge">Today</span>' : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:7px">
+            <div class="pw-progress-bar" style="flex:1;width:auto"><div class="pw-progress-fill" id="pwfill-${dateStr}" style="width:${pct}%"></div></div>
+            <span class="pw-day-count" id="pwcount-${dateStr}">${done}/${total}</span>
+          </div>
         </div>
-        <div class="pw-day-right">
-          <div class="pw-progress-bar"><div class="pw-progress-fill" id="pwfill-${dateStr}" style="width:${pct}%"></div></div>
-          <span class="pw-day-count" id="pwcount-${dateStr}">${done}/${total}</span>
+        <div class="pw-mini-donut-wrap">
+          <canvas id="pwdonut-${dateStr}" width="52" height="52"></canvas>
+          <span class="pw-mini-pct" id="pwpct-${dateStr}">${pct ? pct + '%' : ''}</span>
         </div>
       </div>
       <div class="pw-day-body">
@@ -3248,7 +3296,48 @@ function renderPlannerWeek() {
     container.appendChild(dayEl);
   });
 
+  // Create mini donuts after DOM is ready
+  requestAnimationFrame(() => {
+    dates.forEach(dateStr => {
+      const day = getPlannerDay(dateStr);
+      const blocks = day.blocks || [];
+      const total = blocks.length;
+      const done = blocks.filter(b => b.done).length;
+      const pct = total ? Math.round((done / total) * 100) : 0;
+      createOrUpdateMiniDonut(dateStr, pct);
+    });
+  });
+
   updatePlannerCharts();
+}
+
+function createOrUpdateMiniDonut(dateStr, pct) {
+  const ctx = document.getElementById('pwdonut-' + dateStr);
+  if (!ctx) return;
+  const cc = (typeof getChartColors === 'function') ? getChartColors() : { accent: '#ffffff' };
+  const data = [pct || 0, Math.max(0, 100 - (pct || 0))];
+
+  if (plannerMiniCharts[dateStr]) {
+    plannerMiniCharts[dateStr].data.datasets[0].data = data;
+    plannerMiniCharts[dateStr].update();
+    return;
+  }
+  plannerMiniCharts[dateStr] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data,
+        backgroundColor: [cc.accent, 'rgba(255,255,255,.07)'],
+        borderWidth: 0,
+        cutout: '76%'
+      }]
+    },
+    options: {
+      responsive: false,
+      animation: { duration: 600, easing: 'easeInOutQuart' },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } }
+    }
+  });
 }
 
 function renderPwBlock(b, dateStr) {
@@ -3307,15 +3396,36 @@ function togglePlannerBlock(id, dateStr, labelEl) {
   const blockEl = document.getElementById('pwb-' + id);
   if (blockEl) blockEl.classList.toggle('done-block', block.done);
 
-  // Update day progress bar + count without re-rendering whole week
+  // Update day progress bar, count, mini donut — no full re-render
   const blocks = day.blocks;
   const total = blocks.length;
   const done = blocks.filter(b => b.done).length;
   const pct = total ? Math.round((done / total) * 100) : 0;
+
   const fillEl = document.getElementById('pwfill-' + dateStr);
   if (fillEl) fillEl.style.width = pct + '%';
   const countEl = document.getElementById('pwcount-' + dateStr);
   if (countEl) countEl.textContent = done + '/' + total;
+  const pctEl = document.getElementById('pwpct-' + dateStr);
+  if (pctEl) pctEl.textContent = pct ? pct + '%' : '';
+
+  // Animate mini donut
+  createOrUpdateMiniDonut(dateStr, pct);
+
+  // Update week summary stats
+  const dates = getWeekDates(plannerCurrentWeekStart);
+  let totalAll = 0, doneAll = 0;
+  dates.forEach(ds => {
+    const b = getPlannerDay(ds).blocks || [];
+    totalAll += b.length;
+    doneAll += b.filter(x => x.done).length;
+  });
+  const weekPct = totalAll ? Math.round(doneAll / totalAll * 100) : 0;
+  const sumEl = document.getElementById('pwSummary');
+  if (sumEl) sumEl.innerHTML = `
+    <div class="pw-stat"><div class="pw-stat-val">${totalAll}</div><div class="pw-stat-label">Total Tasks</div></div>
+    <div class="pw-stat pw-stat-accent"><div class="pw-stat-val">${doneAll}</div><div class="pw-stat-label">Completed</div></div>
+    <div class="pw-stat"><div class="pw-stat-val">${weekPct}%</div><div class="pw-stat-label">This Week</div></div>`;
 
   updatePlannerCharts();
   checkPlannerMilestones(pct, dateStr);
